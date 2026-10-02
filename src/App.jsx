@@ -95,8 +95,8 @@ function App() {
   const [notice, setNotice] = useState("");
   const [installPrompt, setInstallPrompt] = useState(null);
   const [theme, setTheme] = useState(() => window.localStorage.getItem("pocket-ledger-theme") || "classic");
-  const [showAuth, setShowAuth] = useState(false);
   const [localAccount, setLocalAccount] = useState(readLocalAccount);
+  const [showAuth, setShowAuth] = useState(() => !readLocalAccount());
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
 
@@ -244,7 +244,7 @@ function App() {
   const suggestions = type === "income" ? incomeCategories : expenseCategories;
   const runningBalances = getRunningBalances(transactions);
   if (showAuth) {
-    return <AuthView onBack={() => setShowAuth(false)} onSuccess={handleAuthSuccess} />;
+    return <AuthView canGoBack={Boolean(localAccount)} onBack={() => setShowAuth(false)} onSuccess={handleAuthSuccess} />;
   }
   return (
     <main className="app-shell">
@@ -317,7 +317,7 @@ function SettingsView({ onExport, onClear, count, theme, onThemeChange, onLogin 
   return <div className="view-wrap"><div className="page-intro"><div><p className="eyebrow">Workspace controls</p><h1>Make it <em>feel like you.</em></h1><p className="intro-copy">Choose a mood for your ledger, export your records, or connect an account.</p></div></div><section className="settings-grid"><div className="paper-card setting-card theme-card"><span className="setting-icon"><Sparkles size={19} /></span><h2>Pick your vibe</h2><p>Change the look anytime. Your choice is saved on this device.</p><div className="theme-options"><button className={theme === "classic" ? "theme-option selected" : "theme-option"} onClick={() => onThemeChange("classic")}><i className="theme-swatch classic-swatch" />Classic</button><button className={theme === "lavender" ? "theme-option selected" : "theme-option"} onClick={() => onThemeChange("lavender")}><i className="theme-swatch lavender-swatch" />Lavender</button><button className={theme === "sunset" ? "theme-option selected" : "theme-option"} onClick={() => onThemeChange("sunset")}><i className="theme-swatch sunset-swatch" />Sunset</button></div></div><div className="paper-card setting-card"><span className="setting-icon"><Download size={19} /></span><h2>Export your ledger</h2><p>Download all {count} saved {count === 1 ? "record" : "records"} as a readable JSON file.</p><button className="primary-button" onClick={onExport}><Download size={16} /> Export JSON</button></div><div className="paper-card setting-card account-card"><span className="setting-icon"><Sparkles size={19} /></span><h2>Share across devices</h2><p>Connect a Supabase account to sync your ledger with your classmates and your other devices.</p><button className="outline-button" onClick={onLogin}>Open login</button></div><div className="paper-card setting-card danger-card"><span className="setting-icon danger"><Trash2 size={19} /></span><h2>Clear local records</h2><p>This removes every transaction from this browser. This cannot be undone.</p><button className="danger-button" onClick={onClear}>Clear all records</button></div></section></div>;
 }
 
-function AuthView({ onBack, onSuccess }) {
+function AuthView({ canGoBack, onBack, onSuccess }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -367,7 +367,7 @@ function AuthView({ onBack, onSuccess }) {
     setMessage(result.error ? result.error.message : mode === "login" ? "Welcome back." : "Account created. Check your email to confirm it.");
   }
 
-  return <main className="auth-page"><div className="auth-card"><button className="auth-close" aria-label="Back to ledger" onClick={onBack}><X size={18} /></button><div className="auth-logo"><Sparkles size={25} /></div><p className="eyebrow">Pocket Ledger account</p><h1>{mode === "login" ? "Welcome back." : "Create your profile."}</h1><p className="auth-copy">Log in on this device now. Cloud sync can be connected later when Supabase is configured.</p><form onSubmit={submit}><label className="form-label" htmlFor="auth-email">Email</label><input className="form-input" id="auth-email" type="email" required placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /><label className="form-label" htmlFor="auth-password">Password</label><input className="form-input" id="auth-password" type="password" required minLength={6} placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} />{message && <p className="auth-message">{message}</p>}<button className="primary-button auth-submit" disabled={busy}>{busy ? "Connecting..." : mode === "login" ? "Log in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMessage(""); }}>{mode === "login" ? "Need an account? Sign up" : "Already have an account? Log in"}</button><p className="auth-note">Your profile and ledger stay private on this device.</p></div></main>;
+  return <main className="auth-page"><div className="auth-card">{canGoBack && <button className="auth-close" aria-label="Back to ledger" onClick={onBack}><X size={18} /></button>}<div className="auth-logo"><Sparkles size={25} /></div><p className="eyebrow">Pocket Ledger account</p><h1>{mode === "login" ? "Welcome back." : "Create your profile."}</h1><p className="auth-copy">Sign in first so your ledger is protected on this device. Cloud email sync requires Supabase configuration.</p><form onSubmit={submit}><label className="form-label" htmlFor="auth-email">Email</label><input className="form-input" id="auth-email" type="email" required placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /><label className="form-label" htmlFor="auth-password">Password</label><input className="form-input" id="auth-password" type="password" required minLength={6} placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} />{message && <p className="auth-message">{message}</p>}<button className="primary-button auth-submit" disabled={busy}>{busy ? "Connecting..." : mode === "login" ? "Log in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMessage(""); }}>{mode === "login" ? "Need an account? Sign up" : "Already have an account? Log in"}</button><p className="auth-note">Your profile and ledger stay private on this device.</p></div></main>;
 }
 
 export default App;
