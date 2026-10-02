@@ -92,6 +92,38 @@ function fromCloudTransaction(item) {
   };
 }
 
+async function loadAccountTransactions(accountId, localTransactions = []) {
+  if (!supabase) return { transactions: [], notice: "" };
+  const { data: cloudTransactions, error } = await supabase
+    .from("transactions")
+    .select("*")
+    .order("transaction_date", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (error) return { transactions: null, error: error.message };
+
+  if (!cloudTransactions?.length && localTransactions.length) {
+    const legacyRows = localTransactions.map((item) => ({
+      user_id: accountId,
+      type: item.type,
+      amount: Number(item.amount),
+      category: item.category,
+      transaction_date: item.date,
+      note: item.note || item.category,
+    }));
+    const { data: migratedRows, error: migrationError } = await supabase
+      .from("transactions")
+      .insert(legacyRows)
+      .select();
+    if (migrationError) return { transactions: null, error: `Could not migrate local records: ${migrationError.message}` };
+    return {
+      transactions: (migratedRows || []).map(fromCloudTransaction),
+      notice: "Your local records were synced to your account.",
+    };
+  }
+
+  return { transactions: (cloudTransactions || []).map(fromCloudTransaction), notice: "" };
+}
+
 function App() {
   const [transactions, setTransactions] = useState(readTransactions);
   const [activeView, setActiveView] = useState("dashboard");
@@ -129,35 +161,15 @@ function App() {
       const account = { id: data.user.id, email: data.user.email, createdAt: data.user.created_at };
       setLocalAccount(account);
       setShowAuth(false);
-      const { data: cloudTransactions, error: transactionError } = await supabase
-        .from("transactions")
-        .select("*")
-        .order("transaction_date", { ascending: false })
-        .order("created_at", { ascending: false });
       if (!active) return;
-      if (transactionError) {
-        setNotice(`Could not load cloud records: ${transactionError.message}`);
+      const result = await loadAccountTransactions(data.user.id, transactions);
+      if (!active) return;
+      if (result.error) {
+        setNotice(result.error);
         return;
       }
-      if (!cloudTransactions?.length && transactions.length) {
-        const legacyRows = transactions.map((item) => ({
-          user_id: data.user.id,
-          type: item.type,
-          amount: Number(item.amount),
-          category: item.category,
-          transaction_date: item.date,
-          note: item.note || item.category,
-        }));
-        const { data: migratedRows, error: migrationError } = await supabase.from("transactions").insert(legacyRows).select();
-        if (migrationError) {
-          setNotice(`Could not migrate local records: ${migrationError.message}`);
-          return;
-        }
-        setTransactions((migratedRows || []).map(fromCloudTransaction));
-        setNotice("Your local records were synced to your account.");
-        return;
-      }
-      setTransactions((cloudTransactions || []).map(fromCloudTransaction));
+      setTransactions(result.transactions || []);
+      if (result.notice) setNotice(result.notice);
     });
     return () => { active = false; };
   }, []);
@@ -292,14 +304,16 @@ function App() {
     setLocalAccount(account);
     setShowAuth(false);
     if (isSupabaseConfigured && supabase && account.id) {
-      const { data, error } = await supabase.from("transactions").select("*").order("transaction_date", { ascending: false }).order("created_at", { ascending: false });
-      if (error) {
-        setNotice(`Could not load cloud records: ${error.message}`);
+      const result = await loadAccountTransactions(account.id, transactions);
+      if (result.error) {
+        setNotice(result.error);
       } else {
-        setTransactions((data || []).map(fromCloudTransaction));
+        setTransactions(result.transactions || []);
+        setNotice(result.notice || "You are logged in and your ledger is synced.");
       }
+    } else {
+      setNotice("You are logged in on this device.");
     }
-    setNotice("You are logged in on this device.");
     window.setTimeout(() => setNotice(""), 2600);
   }
 
@@ -312,6 +326,7 @@ function App() {
   }
 
   function logout() {
+    if (isSupabaseConfigured && supabase) void supabase.auth.signOut();
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
     setLocalAccount(null);
     setShowAccountMenu(false);
@@ -444,15 +459,21 @@ function AuthView({ canGoBack, onBack, onSuccess }) {
       ? await supabase.auth.signInWithPassword({ email, password })
       : await supabase.auth.signUp({ email, password });
     setBusy(false);
-    if (!result.error) {
-      const account = { id: result.data.user?.id, email: email.trim().toLowerCase(), createdAt: result.data.user?.created_at || new Date().toISOString() };
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(account));
-      onSuccess(account);
+    if (result.error) {
+      setMessage(result.error.message);
+      return;
     }
-    setMessage(result.error ? result.error.message : mode === "login" ? "Welcome back." : "Account created. Check your email to confirm it.");
+    if (!result.data.session || !result.data.user) {
+      setMessage("Account created. Check your email, confirm it, then log in here.");
+      return;
+    }
+    const account = { id: result.data.user.id, email: email.trim().toLowerCase(), createdAt: result.data.user.created_at || new Date().toISOString() };
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(account));
+    onSuccess(account);
+    setMessage(mode === "login" ? "Welcome back." : "Account created and synced.");
   }
 
-  return <main className="auth-page"><div className="auth-card">{canGoBack && <button className="auth-close" aria-label="Back to ledger" onClick={onBack}><X size={18} /></button>}<div className="auth-logo"><Sparkles size={25} /></div><p className="eyebrow">Pocket Ledger account</p><h1>{mode === "login" ? "Welcome back." : "Create your profile."}</h1><p className="auth-copy">Sign in first so your ledger is protected on this device. Cloud email sync requires Supabase configuration.</p><form onSubmit={submit}><label className="form-label" htmlFor="auth-email">Email</label><input className="form-input" id="auth-email" type="email" required placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /><label className="form-label" htmlFor="auth-password">Password</label><input className="form-input" id="auth-password" type="password" required minLength={6} placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} />{message && <p className="auth-message">{message}</p>}<button className="primary-button auth-submit" disabled={busy}>{busy ? "Connecting..." : mode === "login" ? "Log in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMessage(""); }}>{mode === "login" ? "Need an account? Sign up" : "Already have an account? Log in"}</button><p className="auth-note">Your profile and ledger stay private on this device.</p></div></main>;
+  return <main className="auth-page"><div className="auth-card">{canGoBack && <button className="auth-close" aria-label="Back to ledger" onClick={onBack}><X size={18} /></button>}<div className="auth-logo"><Sparkles size={25} /></div><p className="eyebrow">Pocket Ledger account</p><h1>{mode === "login" ? "Welcome back." : "Create your profile."}</h1><p className="auth-copy">{isSupabaseConfigured ? "Sign in to sync your student ledger across devices." : "Sign in first so your ledger is protected on this device."}</p><form onSubmit={submit}><label className="form-label" htmlFor="auth-email">Email</label><input className="form-input" id="auth-email" type="email" required placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /><label className="form-label" htmlFor="auth-password">Password</label><input className="form-input" id="auth-password" type="password" required minLength={6} placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} />{message && <p className="auth-message">{message}</p>}<button className="primary-button auth-submit" disabled={busy}>{busy ? "Connecting..." : mode === "login" ? "Log in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMessage(""); }}>{mode === "login" ? "Need an account? Sign up" : "Already have an account? Log in"}</button><p className="auth-note">{isSupabaseConfigured ? "Your ledger is private to your Supabase account." : "Your profile and ledger stay private on this device."}</p></div></main>;
 }
 
 export default App;
