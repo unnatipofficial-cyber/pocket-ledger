@@ -462,8 +462,11 @@ function AuthView({ canGoBack, onBack, onSuccess }) {
       : await supabase.auth.signUp({ email, password });
     setBusy(false);
     if (result.error) {
-      setMessage(result.error.message);
-      setShowResend(result.error.message.toLowerCase().includes("email not confirmed"));
+      const errorMessage = result.error.message.toLowerCase();
+      setMessage(errorMessage.includes("rate limit")
+        ? "Too many attempts were made. Please wait before trying again."
+        : result.error.message);
+      setShowResend(errorMessage.includes("email not confirmed"));
       return;
     }
     if (!result.data.session || !result.data.user) {
@@ -481,7 +484,14 @@ function AuthView({ canGoBack, onBack, onSuccess }) {
     setBusy(true);
     const result = await supabase.auth.resend({ type: "signup", email: email.trim().toLowerCase() });
     setBusy(false);
-    setMessage(result.error ? result.error.message : "Confirmation email sent. Check your inbox and spam folder.");
+    if (result.error) {
+      const rateLimited = result.error.message.toLowerCase().includes("rate limit");
+      setMessage(rateLimited
+        ? "Email sending is temporarily limited. Please wait before trying again, then check your inbox and spam folder."
+        : result.error.message);
+      return;
+    }
+    setMessage("Confirmation email sent. Check your inbox and spam folder.");
     if (!result.error) setShowResend(false);
   }
 
