@@ -80,6 +80,18 @@ function getRunningBalances(transactions) {
   return balances;
 }
 
+function fromCloudTransaction(item) {
+  return {
+    id: item.id,
+    createdAt: item.created_at,
+    type: item.type,
+    amount: Number(item.amount),
+    category: item.category,
+    date: item.transaction_date,
+    note: item.note || item.category,
+  };
+}
+
 function App() {
   const [transactions, setTransactions] = useState(readTransactions);
   const [activeView, setActiveView] = useState("dashboard");
@@ -127,15 +139,25 @@ function App() {
         setNotice(`Could not load cloud records: ${transactionError.message}`);
         return;
       }
-      setTransactions((cloudTransactions || []).map((item) => ({
-        id: item.id,
-        createdAt: item.created_at,
-        type: item.type,
-        amount: Number(item.amount),
-        category: item.category,
-        date: item.transaction_date,
-        note: item.note || item.category,
-      })));
+      if (!cloudTransactions?.length && transactions.length) {
+        const legacyRows = transactions.map((item) => ({
+          user_id: data.user.id,
+          type: item.type,
+          amount: Number(item.amount),
+          category: item.category,
+          transaction_date: item.date,
+          note: item.note || item.category,
+        }));
+        const { data: migratedRows, error: migrationError } = await supabase.from("transactions").insert(legacyRows).select();
+        if (migrationError) {
+          setNotice(`Could not migrate local records: ${migrationError.message}`);
+          return;
+        }
+        setTransactions((migratedRows || []).map(fromCloudTransaction));
+        setNotice("Your local records were synced to your account.");
+        return;
+      }
+      setTransactions((cloudTransactions || []).map(fromCloudTransaction));
     });
     return () => { active = false; };
   }, []);
@@ -274,7 +296,7 @@ function App() {
       if (error) {
         setNotice(`Could not load cloud records: ${error.message}`);
       } else {
-        setTransactions((data || []).map((item) => ({ id: item.id, createdAt: item.created_at, type: item.type, amount: Number(item.amount), category: item.category, date: item.transaction_date, note: item.note || item.category })));
+        setTransactions((data || []).map(fromCloudTransaction));
       }
     }
     setNotice("You are logged in on this device.");
@@ -313,7 +335,7 @@ function App() {
     <main className="app-shell">
       <header className="site-header">
         <a className="brand" href="#top" onClick={() => setActiveView("dashboard")}><span className="brand-mark"><Sparkles size={21} /></span><span><strong>Pocket Ledger</strong><small>Student money, clearly kept.</small></span></a>
-        <div className="header-actions"><span className="saved-status"><i /> Saved locally</span>{installPrompt && <button className="install-button" onClick={installApp}><Download size={14} /> Install app</button>}<button className="icon-button menu-button" aria-label="Open navigation"><Menu size={19} /></button><div className="profile-wrap"><button className="profile-button" aria-label={localAccount ? "Open account menu" : "Open login"} onClick={handleProfileClick}>U</button>{showAccountMenu && localAccount && <div className="account-menu"><strong>{localAccount.email}</strong><span>Logged in on this device</span><button onClick={logout}>Log out</button></div>}</div></div>
+        <div className="header-actions"><span className="saved-status"><i /> {isSupabaseConfigured && localAccount ? "Synced to your account" : "Saved locally"}</span>{installPrompt && <button className="install-button" onClick={installApp}><Download size={14} /> Install app</button>}<button className="icon-button menu-button" aria-label="Open navigation"><Menu size={19} /></button><div className="profile-wrap"><button className="profile-button" aria-label={localAccount ? "Open account menu" : "Open login"} onClick={handleProfileClick}>U</button>{showAccountMenu && localAccount && <div className="account-menu"><strong>{localAccount.email}</strong><span>Logged in on this device</span><button onClick={logout}>Log out</button></div>}</div></div>
       </header>
       <div className="app-layout" id="top">
         <aside className="sidebar">
