@@ -62,6 +62,12 @@ function readLocalAccount() {
   }
 }
 
+async function hashPassword(password) {
+  const encoded = new TextEncoder().encode(password);
+  const digest = await window.crypto.subtle.digest("SHA-256", encoded);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function getRunningBalances(transactions) {
   let balance = 0;
   const balances = {};
@@ -322,10 +328,30 @@ function AuthView({ onBack, onSuccess }) {
     event.preventDefault();
     setMessage("");
     if (!isSupabaseConfigured || !supabase) {
-      const localAccount = { email: email.trim().toLowerCase(), createdAt: new Date().toISOString() };
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(localAccount));
-      onSuccess(localAccount);
-      setMessage(mode === "login" ? "You are logged in on this device." : "Your local account is ready on this device.");
+      setBusy(true);
+      const normalizedEmail = email.trim().toLowerCase();
+      const savedAccount = readLocalAccount();
+      const passwordHash = await hashPassword(password);
+      if (mode === "login") {
+        if (!savedAccount || savedAccount.email !== normalizedEmail || savedAccount.passwordHash !== passwordHash) {
+          setBusy(false);
+          setMessage("Incorrect email or password.");
+          return;
+        }
+        onSuccess(savedAccount);
+        setMessage("You are logged in on this device.");
+      } else {
+        if (savedAccount) {
+          setBusy(false);
+          setMessage("An account already exists on this device. Please log in.");
+          return;
+        }
+        const localAccount = { email: normalizedEmail, passwordHash, createdAt: new Date().toISOString() };
+        window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(localAccount));
+        onSuccess(localAccount);
+        setMessage("Your local account is ready on this device.");
+      }
+      setBusy(false);
       return;
     }
     setBusy(true);
