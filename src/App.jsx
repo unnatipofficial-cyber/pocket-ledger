@@ -121,7 +121,11 @@ function App() {
     summary[item.type] += Number(item.amount) || 0;
     return summary;
   }, { income: 0, expense: 0 });
-  const balance = totals.income - totals.expense;
+  const allTimeTotals = transactions.reduce((summary, item) => {
+    summary[item.type] += Number(item.amount) || 0;
+    return summary;
+  }, { income: 0, expense: 0 });
+  const balance = allTimeTotals.income - allTimeTotals.expense;
   const filteredTransactions = useMemo(() => transactions
     .filter((item) => filter === "all" || item.type === filter)
     .filter((item) => `${item.note} ${item.category} ${item.date}`.toLowerCase().includes(search.toLowerCase().trim()))
@@ -261,7 +265,7 @@ function App() {
             <>
               <div className="page-intro"><div><p className="eyebrow">October 2026 · Student money hub</p><h1>A clearer view of <em>your money.</em></h1><p className="intro-copy">Know what came in, where it went, and what is still yours.</p></div><div className="date-chip"><CalendarDays size={16} /> {new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(today)}</div></div>
               <section className="summary-grid">
-                <div className="summary-card balance-card"><span className="card-kicker">Available balance</span><strong>{formatCurrency(balance)}</strong><p>Income minus spending this month</p><div className="balance-line"><span /><span /><span /><span /><span /><span /></div></div>
+                <div className="summary-card balance-card"><span className="card-kicker">Available balance</span><strong>{formatCurrency(balance)}</strong><p>All income minus all spending</p><div className="balance-line"><span /><span /><span /><span /><span /><span /></div></div>
                 <div className="summary-card"><span className="card-kicker"><i className="income-dot" /> Total income</span><strong>{formatCurrency(totals.income)}</strong><p className="positive">↗ Money received this month</p></div>
                 <div className="summary-card"><span className="card-kicker"><i className="expense-dot" /> Total spending</span><strong>{formatCurrency(totals.expense)}</strong><p className="negative">↘ Money spent this month</p></div>
               </section>
