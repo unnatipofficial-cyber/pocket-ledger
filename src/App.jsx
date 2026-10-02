@@ -105,6 +105,42 @@ function App() {
   }, [transactions]);
 
   useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return undefined;
+    let active = true;
+    supabase.auth.getUser().then(async ({ data, error }) => {
+      if (!active) return;
+      if (error || !data.user) {
+        setLocalAccount(null);
+        setShowAuth(true);
+        return;
+      }
+      const account = { id: data.user.id, email: data.user.email, createdAt: data.user.created_at };
+      setLocalAccount(account);
+      setShowAuth(false);
+      const { data: cloudTransactions, error: transactionError } = await supabase
+        .from("transactions")
+        .select("*")
+        .order("transaction_date", { ascending: false })
+        .order("created_at", { ascending: false });
+      if (!active) return;
+      if (transactionError) {
+        setNotice(`Could not load cloud records: ${transactionError.message}`);
+        return;
+      }
+      setTransactions((cloudTransactions || []).map((item) => ({
+        id: item.id,
+        createdAt: item.created_at,
+        type: item.type,
+        amount: Number(item.amount),
+        category: item.category,
+        date: item.transaction_date,
+        note: item.note || item.category,
+      })));
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("pocket-ledger-theme", theme);
   }, [theme]);
@@ -156,7 +192,7 @@ function App() {
     setError("");
   }
 
-  function submitTransaction(event) {
+  async function submitTransaction(event) {
     event.preventDefault();
     const numericAmount = Number(amount);
     if (!numericAmount || numericAmount <= 0) {
@@ -168,8 +204,20 @@ function App() {
       return;
     }
     const entry = { id: editingId || createId(), createdAt: editingId ? transactions.find((item) => item.id === editingId)?.createdAt || new Date().toISOString() : new Date().toISOString(), type, amount: numericAmount, category: category.trim(), date, note: note.trim() || category.trim() };
+    if (isSupabaseConfigured && supabase && localAccount?.id) {
+      const payload = { type, amount: numericAmount, category: category.trim(), transaction_date: date, note: note.trim() || category.trim(), user_id: localAccount.id };
+      const result = editingId
+        ? await supabase.from("transactions").update(payload).eq("id", editingId).select().single()
+        : await supabase.from("transactions").insert(payload).select().single();
+      if (result.error) {
+        setError(`Could not save to your account: ${result.error.message}`);
+        return;
+      }
+      entry.id = result.data.id;
+      entry.createdAt = result.data.created_at;
+    }
     setTransactions((current) => editingId ? current.map((item) => item.id === editingId ? entry : item) : [entry, ...current]);
-    setNotice(editingId ? "Transaction updated." : "Transaction saved locally.");
+    setNotice(editingId ? "Transaction updated." : isSupabaseConfigured ? "Transaction saved to your account." : "Transaction saved locally.");
     resetForm();
     window.setTimeout(() => setNotice(""), 2600);
   }
@@ -185,7 +233,14 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function removeTransaction(id) {
+  async function removeTransaction(id) {
+    if (isSupabaseConfigured && supabase && localAccount?.id) {
+      const { error: deleteError } = await supabase.from("transactions").delete().eq("id", id);
+      if (deleteError) {
+        setNotice(`Could not delete cloud record: ${deleteError.message}`);
+        return;
+      }
+    }
     setTransactions((current) => current.filter((item) => item.id !== id));
     setNotice("Transaction deleted.");
     window.setTimeout(() => setNotice(""), 2600);
@@ -211,9 +266,17 @@ function App() {
     }
   }
 
-  function handleAuthSuccess(account) {
+  async function handleAuthSuccess(account) {
     setLocalAccount(account);
     setShowAuth(false);
+    if (isSupabaseConfigured && supabase && account.id) {
+      const { data, error } = await supabase.from("transactions").select("*").order("transaction_date", { ascending: false }).order("created_at", { ascending: false });
+      if (error) {
+        setNotice(`Could not load cloud records: ${error.message}`);
+      } else {
+        setTransactions((data || []).map((item) => ({ id: item.id, createdAt: item.created_at, type: item.type, amount: Number(item.amount), category: item.category, date: item.transaction_date, note: item.note || item.category })));
+      }
+    }
     setNotice("You are logged in on this device.");
     window.setTimeout(() => setNotice(""), 2600);
   }
@@ -360,7 +423,7 @@ function AuthView({ canGoBack, onBack, onSuccess }) {
       : await supabase.auth.signUp({ email, password });
     setBusy(false);
     if (!result.error) {
-      const account = { email: email.trim().toLowerCase(), createdAt: new Date().toISOString() };
+      const account = { id: result.data.user?.id, email: email.trim().toLowerCase(), createdAt: result.data.user?.created_at || new Date().toISOString() };
       window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(account));
       onSuccess(account);
     }
