@@ -423,10 +423,12 @@ function AuthView({ canGoBack, onBack, onSuccess }) {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showResend, setShowResend] = useState(false);
 
   async function submit(event) {
     event.preventDefault();
     setMessage("");
+    setShowResend(false);
     if (!isSupabaseConfigured || !supabase) {
       setBusy(true);
       const normalizedEmail = email.trim().toLowerCase();
@@ -461,6 +463,7 @@ function AuthView({ canGoBack, onBack, onSuccess }) {
     setBusy(false);
     if (result.error) {
       setMessage(result.error.message);
+      setShowResend(result.error.message.toLowerCase().includes("email not confirmed"));
       return;
     }
     if (!result.data.session || !result.data.user) {
@@ -473,7 +476,16 @@ function AuthView({ canGoBack, onBack, onSuccess }) {
     setMessage(mode === "login" ? "Welcome back." : "Account created and synced.");
   }
 
-  return <main className="auth-page"><div className="auth-card">{canGoBack && <button className="auth-close" aria-label="Back to ledger" onClick={onBack}><X size={18} /></button>}<div className="auth-logo"><Sparkles size={25} /></div><p className="eyebrow">Pocket Ledger account</p><h1>{mode === "login" ? "Welcome back." : "Create your profile."}</h1><p className="auth-copy">{isSupabaseConfigured ? "Sign in to sync your student ledger across devices." : "Sign in first so your ledger is protected on this device."}</p><form onSubmit={submit}><label className="form-label" htmlFor="auth-email">Email</label><input className="form-input" id="auth-email" type="email" required placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /><label className="form-label" htmlFor="auth-password">Password</label><input className="form-input" id="auth-password" type="password" required minLength={6} placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} />{message && <p className="auth-message">{message}</p>}<button className="primary-button auth-submit" disabled={busy}>{busy ? "Connecting..." : mode === "login" ? "Log in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMessage(""); }}>{mode === "login" ? "Need an account? Sign up" : "Already have an account? Log in"}</button><p className="auth-note">{isSupabaseConfigured ? "Your ledger is private to your Supabase account." : "Your profile and ledger stay private on this device."}</p></div></main>;
+  async function resendConfirmation() {
+    if (!supabase || !email.trim()) return;
+    setBusy(true);
+    const result = await supabase.auth.resend({ type: "signup", email: email.trim().toLowerCase() });
+    setBusy(false);
+    setMessage(result.error ? result.error.message : "Confirmation email sent. Check your inbox and spam folder.");
+    if (!result.error) setShowResend(false);
+  }
+
+  return <main className="auth-page"><div className="auth-card">{canGoBack && <button className="auth-close" aria-label="Back to ledger" onClick={onBack}><X size={18} /></button>}<div className="auth-logo"><Sparkles size={25} /></div><p className="eyebrow">Pocket Ledger account</p><h1>{mode === "login" ? "Welcome back." : "Create your profile."}</h1><p className="auth-copy">{isSupabaseConfigured ? "Sign in to sync your student ledger across devices." : "Sign in first so your ledger is protected on this device."}</p><form onSubmit={submit}><label className="form-label" htmlFor="auth-email">Email</label><input className="form-input" id="auth-email" type="email" required placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /><label className="form-label" htmlFor="auth-password">Password</label><input className="form-input" id="auth-password" type="password" required minLength={6} placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} />{message && <p className="auth-message">{message}</p>}{showResend && <button className="auth-switch" type="button" onClick={resendConfirmation} disabled={busy}>Resend confirmation email</button>}<button className="primary-button auth-submit" disabled={busy}>{busy ? "Connecting..." : mode === "login" ? "Log in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMessage(""); setShowResend(false); }}>{mode === "login" ? "Need an account? Sign up" : "Already have an account? Log in"}</button><p className="auth-note">{isSupabaseConfigured ? "Your ledger is private to your Supabase account." : "Your profile and ledger stay private on this device."}</p></div></main>;
 }
 
 export default App;
