@@ -62,6 +62,18 @@ function readLocalAccount() {
   }
 }
 
+function getRunningBalances(transactions) {
+  let balance = 0;
+  const balances = {};
+  [...transactions]
+    .sort((a, b) => `${a.date}-${a.createdAt || ""}-${a.id}`.localeCompare(`${b.date}-${b.createdAt || ""}-${b.id}`))
+    .forEach((item) => {
+      balance += item.type === "income" ? Number(item.amount) || 0 : -(Number(item.amount) || 0);
+      balances[item.id] = balance;
+    });
+  return balances;
+}
+
 function App() {
   const [transactions, setTransactions] = useState(readTransactions);
   const [activeView, setActiveView] = useState("dashboard");
@@ -80,6 +92,7 @@ function App() {
   const [showAuth, setShowAuth] = useState(false);
   const [localAccount, setLocalAccount] = useState(readLocalAccount);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
@@ -144,7 +157,7 @@ function App() {
       setError("Add a category or source before saving.");
       return;
     }
-    const entry = { id: editingId || createId(), type, amount: numericAmount, category: category.trim(), date, note: note.trim() || category.trim() };
+    const entry = { id: editingId || createId(), createdAt: editingId ? transactions.find((item) => item.id === editingId)?.createdAt || new Date().toISOString() : new Date().toISOString(), type, amount: numericAmount, category: category.trim(), date, note: note.trim() || category.trim() };
     setTransactions((current) => editingId ? current.map((item) => item.id === editingId ? entry : item) : [entry, ...current]);
     setNotice(editingId ? "Transaction updated." : "Transaction saved locally.");
     resetForm();
@@ -219,6 +232,7 @@ function App() {
   }
 
   const suggestions = type === "income" ? incomeCategories : expenseCategories;
+  const runningBalances = getRunningBalances(transactions);
   if (showAuth) {
     return <AuthView onBack={() => setShowAuth(false)} onSuccess={handleAuthSuccess} />;
   }
@@ -235,13 +249,14 @@ function App() {
           <button className={activeView === "records" ? "nav-item active" : "nav-item"} onClick={() => setActiveView("records")}><ReceiptText size={17} /> All records <span>{transactions.length}</span></button>
           <p className="side-label second">Tools</p>
           <button className={activeView === "settings" ? "nav-item active" : "nav-item"} onClick={() => setActiveView("settings")}><Settings size={17} /> Settings</button>
+          <button className="nav-item" onClick={() => setShowGuide(true)}><BookOpen size={17} /> How to use</button>
           <div className="sidebar-note"><BookOpen size={18} /><strong>Small habits add up.</strong><p>Track the little spends. They tell the bigger story.</p></div>
         </aside>
 
         <section className="main-content">
           {notice && <div className="toast"><Check size={16} /> {notice}</div>}
           {activeView === "settings" ? <SettingsView onExport={exportData} onClear={clearAll} count={transactions.length} theme={theme} onThemeChange={setTheme} onLogin={() => setShowAuth(true)} /> : activeView === "records" ? (
-            <RecordsView transactions={filteredTransactions} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} onEdit={editTransaction} onDelete={removeTransaction} />
+            <RecordsView transactions={filteredTransactions} balances={runningBalances} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} onEdit={editTransaction} onDelete={removeTransaction} />
           ) : (
             <>
               <div className="page-intro"><div><p className="eyebrow">October 2026 · Student money hub</p><h1>A clearer view of <em>your money.</em></h1><p className="intro-copy">Know what came in, where it went, and what is still yours.</p></div><div className="date-chip"><CalendarDays size={16} /> {new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(today)}</div></div>
@@ -262,25 +277,30 @@ function App() {
                     <div className="form-actions"><button className="primary-button" type="submit"><Check size={16} /> {editingId ? "Save changes" : "Save transaction"}</button>{editingId && <button className="cancel-button" type="button" onClick={resetForm}>Cancel</button>}</div>
                   </form>
                 </section>
-                <section className="paper-card recent-card"><div className="section-heading"><div><p className="eyebrow">Your activity</p><h2>Recent records</h2></div><button className="text-button" onClick={() => setActiveView("records")}>View all <ArrowUpRight size={14} /></button></div><TransactionList transactions={transactions.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6)} onEdit={editTransaction} onDelete={removeTransaction} /></section>
+                <section className="paper-card recent-card"><div className="section-heading"><div><p className="eyebrow">Your activity</p><h2>Recent records</h2></div><button className="text-button" onClick={() => setActiveView("records")}>View all <ArrowUpRight size={14} /></button></div><TransactionList transactions={transactions.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6)} balances={runningBalances} onEdit={editTransaction} onDelete={removeTransaction} /></section>
               </div>
               <section className="insight-grid"><div className="paper-card insight-card"><div className="section-heading"><div><p className="eyebrow">This month</p><h2>Where your money goes</h2></div><span className="small-muted">{formatCurrency(totals.expense)} spent</span></div>{topCategories.length ? topCategories.map(([name, value]) => <div className="category-row" key={name}><div><span className="category-name">{name}</span><span className="category-amount">{formatCurrency(value)}</span></div><div className="progress-track"><span style={{ width: `${Math.max(8, (value / totals.expense) * 100)}%` }} /></div></div>) : <p className="empty-copy">Your spending breakdown will appear after your first expense.</p>}</div><div className="paper-card privacy-card"><div className="privacy-seal"><Sparkles size={22} /></div><p className="eyebrow">Private by design</p><h2>Your records stay with you.</h2><p>Everything is saved in this browser. No account, server, or tracking required.</p></div></section>
             </>
           )}
         </section>
       </div>
+      {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}
       <footer><span>Pocket Ledger</span><span>Built for student life</span><span>Local-first · No cloud sync</span></footer>
     </main>
   );
 }
 
-function TransactionList({ transactions, onEdit, onDelete }) {
+function TransactionList({ transactions, balances, onEdit, onDelete }) {
   if (!transactions.length) return <div className="empty-state"><div className="empty-symbol"><ReceiptText size={21} /></div><h3>No records yet</h3><p>Add an entry to start your personal ledger.</p></div>;
-  return <div className="transaction-list">{transactions.map((item) => { const Icon = categoryIcons[item.category] || MoreHorizontal; return <article className="transaction-row" key={item.id}><span className={`transaction-symbol ${item.type}`}><Icon size={17} /></span><div className="transaction-main"><strong>{item.note}</strong><span>{item.category} <b>·</b> {formatDate(item.date)}</span></div><strong className={`transaction-value ${item.type}`}>{item.type === "income" ? "+" : "−"}{formatCurrency(item.amount)}</strong><div className="row-actions"><button aria-label={`Edit ${item.note}`} onClick={() => onEdit(item)}><Pencil size={14} /></button><button aria-label={`Delete ${item.note}`} onClick={() => onDelete(item.id)}><Trash2 size={14} /></button></div></article>; })}</div>;
+  return <div className="transaction-list">{transactions.map((item) => { const Icon = categoryIcons[item.category] || MoreHorizontal; return <article className="transaction-row" key={item.id}><span className={`transaction-symbol ${item.type}`}><Icon size={17} /></span><div className="transaction-main"><strong>{item.note}</strong><span>{item.category} <b>·</b> {formatDate(item.date)}</span><small>Remaining {formatCurrency(balances[item.id] || 0)}</small></div><strong className={`transaction-value ${item.type}`}>{item.type === "income" ? "+" : "−"}{formatCurrency(item.amount)}</strong><div className="row-actions"><button aria-label={`Edit ${item.note}`} onClick={() => onEdit(item)}><Pencil size={14} /></button><button aria-label={`Delete ${item.note}`} onClick={() => onDelete(item.id)}><Trash2 size={14} /></button></div></article>; })}</div>;
 }
 
-function RecordsView({ transactions, search, setSearch, filter, setFilter, onEdit, onDelete }) {
-  return <div className="view-wrap"><div className="page-intro"><div><p className="eyebrow">Your archive</p><h1>Every record, <em>in one place.</em></h1><p className="intro-copy">Search, review, and edit your personal money history.</p></div><button className="outline-button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}><Download size={15} /> Use export in Settings</button></div><section className="paper-card archive-card"><div className="archive-toolbar"><div className="search-field"><Search size={16} /><input aria-label="Search records" placeholder="Search notes, categories..." value={search} onChange={(event) => setSearch(event.target.value)} /></div><div className="filter-pills"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button><button className={filter === "income" ? "active" : ""} onClick={() => setFilter("income")}>Income</button><button className={filter === "expense" ? "active" : ""} onClick={() => setFilter("expense")}>Expenses</button></div></div><TransactionList transactions={transactions} onEdit={onEdit} onDelete={onDelete} /></section></div>;
+function RecordsView({ transactions, balances, search, setSearch, filter, setFilter, onEdit, onDelete }) {
+  return <div className="view-wrap"><div className="page-intro"><div><p className="eyebrow">Your archive</p><h1>Every record, <em>in one place.</em></h1><p className="intro-copy">Search, review, and edit your personal money history.</p></div><button className="outline-button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}><Download size={15} /> Use export in Settings</button></div><section className="paper-card archive-card"><div className="archive-toolbar"><div className="search-field"><Search size={16} /><input aria-label="Search records" placeholder="Search notes, categories..." value={search} onChange={(event) => setSearch(event.target.value)} /></div><div className="filter-pills"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button><button className={filter === "income" ? "active" : ""} onClick={() => setFilter("income")}>Income</button><button className={filter === "expense" ? "active" : ""} onClick={() => setFilter("expense")}>Expenses</button></div></div><TransactionList transactions={transactions} balances={balances} onEdit={onEdit} onDelete={onDelete} /></section></div>;
+}
+
+function GuideModal({ onClose }) {
+  return <div className="guide-overlay" role="dialog" aria-modal="true" aria-labelledby="guide-title"><section className="guide-card"><button className="auth-close" aria-label="Close guide" onClick={onClose}><X size={18} /></button><span className="setting-icon"><BookOpen size={19} /></span><p className="eyebrow">Pocket Ledger basics</p><h2 id="guide-title">Manage your money in three steps.</h2><div className="guide-steps"><div><b>1</b><p><strong>Add income</strong> Choose Income when money comes from family, a friend, scholarship, or work.</p></div><div><b>2</b><p><strong>Add expenses</strong> Choose Expense for food, travel, fees, shopping, or anything you buy.</p></div><div><b>3</b><p><strong>Check Remaining</strong> Every record shows the balance left after that entry. Edit mistakes with the pencil icon.</p></div></div><p className="guide-note">Your records are saved on this device. Use Settings to export a backup JSON file before changing phones.</p><button className="primary-button" onClick={onClose}>Got it</button></section></div>;
 }
 
 function SettingsView({ onExport, onClear, count, theme, onThemeChange, onLogin }) {
