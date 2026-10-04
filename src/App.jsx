@@ -63,6 +63,21 @@ const formatCurrency = (amount) => new Intl.NumberFormat("en-IN", { style: "curr
 const formatDate = (date) => new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${date}T00:00:00`));
 const createId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+function normalizeTransactions(items) {
+  const seen = new Set();
+  const recentDuplicates = new Map();
+  return items.filter((item) => {
+    if (!item?.id || seen.has(item.id)) return false;
+    seen.add(item.id);
+    const fingerprint = [item.type, item.amount, item.category, item.date, item.note || ""].join("|");
+    const createdAt = Date.parse(item.createdAt || "");
+    const previousCreatedAt = recentDuplicates.get(fingerprint);
+    if (previousCreatedAt && createdAt && Math.abs(createdAt - previousCreatedAt) <= 5000) return false;
+    if (createdAt) recentDuplicates.set(fingerprint, createdAt);
+    return true;
+  });
+}
+
 function readTransactions() {
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -70,21 +85,6 @@ function readTransactions() {
     return Array.isArray(parsed) ? normalizeTransactions(parsed) : [];
   } catch {
     return [];
-  }
-
-  function normalizeTransactions(items) {
-    const seen = new Set();
-    const recentDuplicates = new Map();
-    return items.filter((item) => {
-      if (!item?.id || seen.has(item.id)) return false;
-      seen.add(item.id);
-      const fingerprint = [item.type, item.amount, item.category, item.date, item.note || ""].join("|");
-      const createdAt = Date.parse(item.createdAt || "");
-      const previousCreatedAt = recentDuplicates.get(fingerprint);
-      if (previousCreatedAt && createdAt && Math.abs(createdAt - previousCreatedAt) <= 5000) return false;
-      if (createdAt) recentDuplicates.set(fingerprint, createdAt);
-      return true;
-    });
   }
 }
 
@@ -226,6 +226,11 @@ function App() {
       }
       setTransactions(normalizeTransactions(result.transactions || []));
       if (result.notice) setNotice(result.notice);
+    }).catch((syncError) => {
+      if (active) {
+        console.error("Pocket Ledger account sync failed.", syncError);
+        setNotice("Could not sync your ledger. Your local records are still available.");
+      }
     });
     return () => { active = false; };
   }, []);
@@ -309,12 +314,19 @@ function App() {
           setError(`Could not save to your account: ${result.error.message}`);
           return;
         }
+        if (!result.data) {
+          setError("Could not save to your account: no transaction was returned.");
+          return;
+        }
         entry.id = result.data.id;
         entry.createdAt = result.data.created_at;
       }
       setTransactions((current) => normalizeTransactions(editingId ? current.map((item) => item.id === editingId ? entry : item) : [entry, ...current]));
       setNotice(editingId ? "Transaction updated." : isSupabaseConfigured ? "Transaction saved to your account." : "Transaction saved locally.");
       resetForm();
+    } catch (saveError) {
+      console.error("Pocket Ledger transaction save failed.", saveError);
+      setError("Could not save this transaction. Please try again.");
     } finally {
       setIsSaving(false);
     }
