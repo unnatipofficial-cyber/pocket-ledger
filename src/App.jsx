@@ -38,6 +38,7 @@ const expenseCategories = ["Food", "Academics", "Travel", "Shopping", "Pocket mo
 const incomeCategories = ["Father", "Mother", "Family support", "Friend", "Scholarship", "Part-time work", "Gift", "Other"];
 const categoryIcons = { Food: Coffee, Academics: GraduationCap, Travel: Plane, Shopping: ShoppingBag, Bills: Home, "Pocket money": BarChart3, Other: MoreHorizontal };
 const today = new Date();
+const accountTransactionLoads = new Map();
 
 function getAccountDisplayName(account) {
   return account?.displayName ||
@@ -65,15 +66,13 @@ const createId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Mat
 
 function normalizeTransactions(items) {
   const seen = new Set();
-  const recentDuplicates = new Map();
+  const fingerprints = new Set();
   return items.filter((item) => {
     if (!item?.id || seen.has(item.id)) return false;
     seen.add(item.id);
     const fingerprint = [item.type, item.amount, item.category, item.date, item.note || ""].join("|");
-    const createdAt = Date.parse(item.createdAt || "");
-    const previousCreatedAt = recentDuplicates.get(fingerprint);
-    if (previousCreatedAt && createdAt && Math.abs(createdAt - previousCreatedAt) <= 5000) return false;
-    if (createdAt) recentDuplicates.set(fingerprint, createdAt);
+    if (fingerprints.has(fingerprint)) return false;
+    fingerprints.add(fingerprint);
     return true;
   });
 }
@@ -129,35 +128,47 @@ function fromCloudTransaction(item) {
 
 async function loadAccountTransactions(accountId, localTransactions = []) {
   if (!supabase) return { transactions: [], notice: "" };
-  const { data: cloudTransactions, error } = await supabase
-    .from("transactions")
-    .select("*")
-    .eq("user_id", accountId)
-    .order("transaction_date", { ascending: false })
-    .order("created_at", { ascending: false });
-  if (error) return { transactions: null, error: error.message };
+  const existingLoad = accountTransactionLoads.get(accountId);
+  if (existingLoad) return existingLoad;
 
-  if (!cloudTransactions?.length && localTransactions.length) {
-    const legacyRows = localTransactions.map((item) => ({
-      user_id: accountId,
-      type: item.type,
-      amount: Number(item.amount),
-      category: item.category,
-      transaction_date: item.date,
-      note: item.note || item.category,
-    }));
-    const { data: migratedRows, error: migrationError } = await supabase
+  const load = (async () => {
+    const { data: cloudTransactions, error } = await supabase
       .from("transactions")
-      .insert(legacyRows)
-      .select();
-    if (migrationError) return { transactions: null, error: `Could not migrate local records: ${migrationError.message}` };
-    return {
-      transactions: (migratedRows || []).map(fromCloudTransaction),
-      notice: "Your local records were synced to your account.",
-    };
-  }
+      .select("*")
+      .eq("user_id", accountId)
+      .order("transaction_date", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (error) return { transactions: null, error: error.message };
 
-  return { transactions: normalizeTransactions((cloudTransactions || []).map(fromCloudTransaction)), notice: "" };
+    if (!cloudTransactions?.length && localTransactions.length) {
+      const legacyRows = normalizeTransactions(localTransactions).map((item) => ({
+        id: item.id,
+        user_id: accountId,
+        type: item.type,
+        amount: Number(item.amount),
+        category: item.category,
+        transaction_date: item.date,
+        note: item.note || item.category,
+      }));
+      const { data: migratedRows, error: migrationError } = await supabase
+        .from("transactions")
+        .upsert(legacyRows, { onConflict: "id", ignoreDuplicates: true })
+        .select();
+      if (migrationError) return { transactions: null, error: `Could not migrate local records: ${migrationError.message}` };
+      return {
+        transactions: normalizeTransactions((migratedRows || []).map(fromCloudTransaction)),
+        notice: "Your local records were synced to your account.",
+      };
+    }
+
+    return { transactions: normalizeTransactions((cloudTransactions || []).map(fromCloudTransaction)), notice: "" };
+  })();
+  accountTransactionLoads.set(accountId, load);
+  try {
+    return await load;
+  } finally {
+    accountTransactionLoads.delete(accountId);
+  }
 }
 
 function App() {
